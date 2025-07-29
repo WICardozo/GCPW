@@ -1,80 +1,82 @@
-# Requiere ejecución como administrador
-if (-not ([Security.Principal.WindowsPrincipal] `
-    [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(`
-    [Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Host "Este script debe ejecutarse como administrador." -ForegroundColor Red
-    exit 1
+# ==================== CONFIGURACION ====================
+$ErrorActionPreference = "Stop"
+
+# URLs de descarga
+$chromeUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
+$zipUrl = "https://github.com/WICardozo/GCPW/archive/refs/heads/main.zip"  # <-- Tu .zip que contiene el .exe
+
+# Rutas temporales
+$chromePath = "C:\Windows\Temp\ChromeSetup.exe"
+$zipFilePath = "C:\Temp\GCPW.zip"
+$extractPath = "C:\Temp\GCPW"
+$logPath = "C:\Temp\gcpw_install_log.txt"
+
+# ==================== VERIFICAR ADMIN ====================
+If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Host "`n Este script debe ejecutarse como administrador." -ForegroundColor Red
+    Exit 1
 }
 
-# Verifica si Chrome está instalado
-function Chrome-Instalado {
-    $paths = @(
-        "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
-        "$env:ProgramFiles(x86)\Google\Chrome\Application\chrome.exe"
-    )
-    return $paths | Where-Object { Test-Path $_ } | Measure-Object | Select-Object -ExpandProperty Count
-}
+# ==================== INSTALAR CHROME ====================
+Write-Host "`n Iniciando instalacion automatica de Google Chrome y GCPW..." -ForegroundColor Cyan
 
-# Verifica si GCPW está instalado
-function GCPW-Instalado {
-    $path = "$env:ProgramFiles\Google\GCPW\gcp_setup.exe"
-    return Test-Path $path
-}
-
-# Instalar archivo .exe o .msi de forma silenciosa
-function Instalar-Archivo ($path, $tipo) {
-    $nombre = Split-Path $path -Leaf
-    Write-Host "Instalando $nombre de forma silenciosa..."
-    if ($tipo -eq "exe") {
-        Start-Process -FilePath $path -ArgumentList "/silent", "/install" -Wait
-    } elseif ($tipo -eq "msi") {
-        Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$path`"", "/qn" -Wait
+if ((Test-Path "C:\Program Files\Google\Chrome\Application\chrome.exe") -or (Test-Path "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe")) {
+    Write-Host "Google Chrome ya está instalado."
+} else {
+    Write-Host "`n Descargando Google Chrome..."
+    try {
+        Invoke-WebRequest -Uri $chromeUrl -OutFile $chromePath -UseBasicParsing
+        Write-Host " Instalando Chrome..."
+        Start-Process -FilePath $chromePath -ArgumentList "/silent" -Wait
+    } catch {
+        Write-Host " Error al descargar o instalar Chrome: $_" -ForegroundColor Red
     }
 }
 
-# Iniciar un servicio
-function Iniciar-Servicio ($nombre) {
-    Write-Host "Iniciando servicio '$nombre'..."
-    Start-Service -Name $nombre -ErrorAction SilentlyContinue
-}
-
-# ---------------------
-# Lógica principal
-# ---------------------
-
-$chromePath = "C:\Windows\Temp\ChromeSetup.exe"
-$gcpwPath   = "C:\Windows\Temp\GCPWInstaller.msi"
-
-# Instalar Chrome
-if (Chrome-Instalado -gt 0) {
-    Write-Host "Google Chrome ya está instalado."
-} else {
-    Write-Host "Instalando Google Chrome..."
-    $chromeUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
-    Invoke-WebRequest -Uri $chromeUrl -OutFile $chromePath
-    Instalar-Archivo -path $chromePath -tipo "exe"
-}
-
-# Instalar GCPW
-if (GCPW-Instalado) {
-    Write-Host "GCPW ya está instalado."
-} else {
-    Write-Host "Instalando GCPW desde GitHub..."
-    $gcpwUrl = "https://github.com/WICardozo/GCPW/raw/main/GCPWInstaller.msi"
-    Invoke-WebRequest -Uri $gcpwUrl -OutFile $gcpwPath
-    Instalar-Archivo -path $gcpwPath -tipo "msi"
-}
-
-# Iniciar servicio de actualización
-Iniciar-Servicio -nombre "gupdate"
-
-# Limpiar instaladores
+# ==================== DESCARGAR ZIP ====================
+Write-Host "`n Descargando ZIP de GCPW desde GitHub..."
 try {
-    if (Test-Path $chromePath) { Remove-Item $chromePath -Force }
-    if (Test-Path $gcpwPath)    { Remove-Item $gcpwPath -Force }
-    Write-Host "Instaladores eliminados de C:\Windows\Temp."
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zipFilePath -UseBasicParsing
+    Write-Host " ZIP descargado correctamente."
 } catch {
-    Write-Host "No se pudieron eliminar todos los archivos: $_"
+    Write-Host " Error al descargar el ZIP: $_" -ForegroundColor Red
+    Exit 1
 }
 
-Write-Host "`nProceso finalizado correctamente." -ForegroundColor Green
+# ==================== EXTRAER ZIP ====================
+if (Test-Path $extractPath) {
+    Remove-Item -Path $extractPath -Recurse -Force
+    Write-Host "Carpeta vieja eliminada."
+}
+
+try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFilePath, $extractPath)
+    Write-Host "Archivo ZIP descomprimido correctamente."
+} catch {
+    Write-Host " Error al descomprimir el ZIP: $_" -ForegroundColor Red
+    Exit 1
+}
+
+# ==================== BUSCAR E INSTALAR EXE ====================
+$gcpwExePath = Get-ChildItem -Path $extractPath -Recurse -Filter "GCPWInstaller.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $_.FullName }
+
+if (-Not (Test-Path $gcpwExePath)) {
+    Write-Host "No se encontró GCPWInstaller.exe en el ZIP descomprimido." -ForegroundColor Red
+    Exit 1
+}
+
+try {
+    Write-Host "Instalando GCPW sin token..."
+    Start-Process -FilePath $gcpwExePath -ArgumentList "/silent" -Wait -RedirectStandardOutput $logPath -RedirectStandardError $logPath
+} catch {
+    Write-Host " Error al instalar GCPW: $_" -ForegroundColor Red
+    Exit 1
+}
+
+# ==================== VERIFICACION ====================
+if (Test-Path "C:\Program Files\Google\GCPW\gcp_setup.exe") {
+    Write-Host "GCPW instalado correctamente." -ForegroundColor Green
+} else {
+    Write-Host " GCPW no se instaló correctamente. Revisar el log en $logPath" -ForegroundColor Yellow
+}
