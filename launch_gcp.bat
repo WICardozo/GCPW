@@ -1,8 +1,18 @@
 @echo off
-:: Lanza PowerShell como administrador y ejecuta el script con RemoteSigned temporal
+SETLOCAL
 
+:: Nombre del script PowerShell
+set SCRIPT=GCP.ps1
+
+:: Verificar si el script existe en el mismo directorio
+if not exist "%~dp0%SCRIPT%" (
+    echo No se encuentra el script: %SCRIPT%
+    pause
+    exit /b 1
+)
+
+:: Ejecutar como administrador
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
- "Set-ExecutionPolicy RemoteSigned -Scope Process -Force; ^
-  & 'C:\Users\July\Desktop\GCP.ps1'"
+    "Start-Process PowerShell -ArgumentList '-ExecutionPolicy Bypass -NoProfile -File \"%~dp0%SCRIPT%\"' -Verb RunAs"
 
-pause
+ENDLOCAL
